@@ -52,7 +52,7 @@ Launch first bot until you're in web UI, switch steam accounts, repeat the proce
 
 Daily reset will cause the bots to crash, you must set everything up manually then. 
 
-# That's it! 
+# That's it! Feel free to join the discord: discord.gg/wpbd3hTBDc we are a community for automation enthusiasts, hosting multiple T10 SS clubs.
 
 # Tips and Tricks:
 
