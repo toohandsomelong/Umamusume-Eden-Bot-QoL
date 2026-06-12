@@ -75,6 +75,7 @@
                         </div>
                         <div id="error-msg" class="status-msg"></div>
                         <button id="login-btn" type="submit" class="btn btn-primary">LOGIN</button>
+                        <button id="cleanup-btn" type="button" class="btn btn-secondary" style="margin-top:12px">CLEAN SAVED CREDENTIALS</button>
                     </form>
                 </div>
             </div>
@@ -129,6 +130,13 @@
                                     <div class="preset-field">
                                         <label class="form-label" for="preset-skill-threshold">MIN SKILL PT</label>
                                         <input id="preset-skill-threshold" class="form-input master-data-input preset-input" type="number">
+                                    </div>
+                                    <div class="preset-field preset-checkbox-field">
+                                        <label class="form-label" for="preset-only-provided">LIST ONLY</label>
+                                        <div class="preset-checkbox-wrap">
+                                            <input id="preset-only-provided" class="preset-checkbox" type="checkbox">
+                                            <label for="preset-only-provided">Only buy listed skills</label>
+                                        </div>
                                     </div>
                                 </div>
                                 <button id="preset-edit-skills-btn" class="btn btn-sm preset-wide-btn" type="button">CONFIGURE SKILLS (PRIORITIES & BLACKLIST)</button>
@@ -280,12 +288,28 @@
                         <div id="skill-filters" class="skill-filter-row"></div>
                     </div>
 
+                    <div class="skill-add-new-bar">
+                        <input type="text" id="skill-add-name" class="form-input skill-add-input" placeholder="New skill name...">
+                        <select id="skill-add-category" class="form-input skill-add-select">
+                            <option value="0">Basic</option>
+                            <option value="5" selected>Unique/Race</option>
+                        </select>
+                        <select id="skill-add-rarity" class="form-input skill-add-select">
+                            <option value="1">★1</option>
+                            <option value="2">★2</option>
+                            <option value="3">★3</option>
+                            <option value="4">★4</option>
+                            <option value="5" selected>★5</option>
+                        </select>
+                        <button id="skill-add-btn" class="btn btn-sm skill-editor-action">+ ADD</button>
+                    </div>
+
                     <div id="skill-list" class="skill-editor-scroll skill-list-grid"></div>
                 </div>
             </div>
         </div>
     </div>
-    <script src="app.js?v=11"></script>
+    <script src="app.js?v=12"></script>
 </body>
 </html>
 

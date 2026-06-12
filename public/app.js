@@ -75,6 +75,7 @@ const els = {
     presetRunningStyle: document.getElementById('preset-running-style'),
     presetSkillThreshold: document.getElementById('preset-skill-threshold'),
     presetEditSkillsBtn: document.getElementById('preset-edit-skills-btn'),
+    presetOnlyProvided: document.getElementById('preset-only-provided'),
     skillModal: document.getElementById('skill-modal'),
     skillSearch: document.getElementById('skill-search'),
     skillList: document.getElementById('skill-list'),
@@ -572,6 +573,20 @@ const els = {
             } catch (e) {
                 showLoginError('NETWORK ERROR');
             }
+        });
+
+        els.cleanupBtn = document.getElementById('cleanup-btn');
+        els.cleanupBtn.addEventListener('click', async () => {
+            localStorage.removeItem('saved_username');
+            localStorage.removeItem('saved_password');
+            document.getElementById('username').value = '';
+            document.getElementById('password').value = '';
+            document.getElementById('code').value = '';
+            try {
+                await apiJson('/api/cleanup', { method: 'POST' });
+            } catch (e) {}
+            els.errorMsg.style.display = 'block';
+            els.errorMsg.textContent = 'CREDENTIALS CLEARED';
         });
 
         els.logoutBtn.addEventListener('click', async () => {
@@ -1518,7 +1533,14 @@ const els = {
             if (!current) return;
 
             current.learn_skill_threshold = parseInt(els.presetSkillThreshold.value) || 888;
+            current.learn_skill_only_user_provided = els.presetOnlyProvided?.checked || false;
             current.running_style = parseInt(els.presetRunningStyle?.value) || 1;
+
+            current.team_trainee_id = selection.trainee ? Number(selection.trainee.id) : 0;
+            current.team_parent_ids = selection.veterans.length >= 2 ? selection.veterans.map(v => Number(v.instance_id)) : [];
+            current.team_deck_id = selection.deck ? Number(selection.deck.id) : 0;
+            current.team_friend_viewer_id = selection.friend ? Number(selection.friend.viewer_id) : 0;
+            current.team_friend_card_id = selection.friend ? Number(selection.friend.support_card_id) : 0;
 
             try {
                 await apiJson('/api/presets', {
@@ -1535,7 +1557,74 @@ const els = {
             if (!current) return;
 
             els.presetSkillThreshold.value = current.learn_skill_threshold || 888;
+            if (els.presetOnlyProvided) els.presetOnlyProvided.checked = current.learn_skill_only_user_provided || false;
             if (els.presetRunningStyle) els.presetRunningStyle.value = current.running_style || 1;
+        }
+
+        function loadTeamFromPreset(preset) {
+            if (!preset || !dashData) return;
+            if (!preset.team_trainee_id && !preset.team_deck_id && !preset.team_parent_ids?.length && !preset.team_friend_viewer_id) return;
+
+            document.querySelectorAll('.deck-container.selected, #uma-grid .grid-card.selected, #parent-grid .grid-card.selected, #friend-grid .grid-card.selected')
+                .forEach(el => el.classList.remove('selected'));
+
+            selection.deck = null;
+            selection.trainee = null;
+            selection.veterans = [];
+            selection.friend = null;
+            state.pendingFriendSelection = null;
+
+            if (preset.team_deck_id && dashData.validDecks) {
+                const idx = dashData.validDecks.findIndex(d => Number(d.id) === Number(preset.team_deck_id));
+                if (idx >= 0) {
+                    selection.deck = dashData.validDecks[idx];
+                    const deckEls = document.querySelectorAll('.deck-container');
+                    if (deckEls[idx]) deckEls[idx].classList.add('selected');
+                }
+            }
+
+            if (preset.team_trainee_id && dashData.umas) {
+                const idx = dashData.umas.findIndex(u => Number(u.id) === Number(preset.team_trainee_id));
+                if (idx >= 0) {
+                    selection.trainee = dashData.umas[idx];
+                    const umaEls = document.querySelectorAll('#uma-grid .grid-card');
+                    if (umaEls[idx]) umaEls[idx].classList.add('selected');
+                }
+            }
+
+            if (preset.team_parent_ids?.length && dashData.parents) {
+                const wanted = preset.team_parent_ids.map(id => Number(id)).filter(Boolean);
+                dashData.parents.forEach((p, idx) => {
+                    const pId = Number(p.instance_id);
+                    if (wanted.includes(pId) && selection.veterans.length < 2 && !selection.veterans.find(v => Number(v.instance_id) === pId)) {
+                        p._gridIdx = idx;
+                        selection.veterans.push(p);
+                        const parentEls = document.querySelectorAll('#parent-grid .grid-card');
+                        if (parentEls[idx]) parentEls[idx].classList.add('selected');
+                    }
+                });
+                updateVetSelectability();
+            }
+
+            if (preset.team_friend_viewer_id && preset.team_friend_card_id) {
+                const visibleFriends = (dashData.visibleFriends || dashData.friends || []);
+                const matched = visibleFriends.find(f =>
+                    Number(f.viewer_id) === Number(preset.team_friend_viewer_id) &&
+                    Number(f.support_card_id) === Number(preset.team_friend_card_id)
+                );
+                if (matched) {
+                    selection.friend = matched;
+                } else {
+                    state.pendingFriendSelection = {
+                        viewer_id: String(preset.team_friend_viewer_id),
+                        support_card_id: String(preset.team_friend_card_id)
+                    };
+                }
+                syncFriendSelection();
+            }
+
+            renderTeamPanel();
+            syncSelectionToServer();
         }
 
         function bindPresetHandlers() {
@@ -1546,11 +1635,13 @@ const els = {
                     syncSelectedPresetRaces();
                     populatePresetUI();
                     renderRaces();
+                    loadTeamFromPreset(getCurrentPreset());
                 });
             }
 
             const saveHandler = () => savePresetConfig();
             els.presetSkillThreshold?.addEventListener('change', saveHandler);
+            els.presetOnlyProvided?.addEventListener('change', saveHandler);
             els.presetRunningStyle?.addEventListener('change', saveHandler);
 
             els.presetEditSkillsBtn?.addEventListener('click', () => {
@@ -1570,6 +1661,32 @@ const els = {
             els.skillModalClose?.addEventListener('click', () => { els.skillModal.style.display = 'none'; });
 
             els.skillSearch?.addEventListener('input', renderSkillList);
+
+            document.getElementById('skill-add-btn')?.addEventListener('click', async () => {
+                const nameInput = document.getElementById('skill-add-name');
+                const categorySelect = document.getElementById('skill-add-category');
+                const raritySelect = document.getElementById('skill-add-rarity');
+                const name = (nameInput?.value || '').trim();
+                if (!name) return;
+                try {
+                    const res = await apiJson('/api/skills', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            name: name,
+                            skill_category: parseInt(categorySelect?.value || '0'),
+                            rarity: parseInt(raritySelect?.value || '1'),
+                        })
+                    });
+                    if (res.success) {
+                        if (nameInput) nameInput.value = '';
+                        skillDataCache = null;
+                        await loadSkillData();
+                        renderSkillFilters();
+                        renderSkillList();
+                    }
+                } catch (e) {}
+            });
 
             els.skillAddTierBtn?.addEventListener('click', async () => {
                 const current = getCurrentPreset();
@@ -1687,7 +1804,8 @@ const els = {
                     learn_skill_list: [],
                     learn_skill_blacklist: [],
                     extra_race_list: [],
-                    learn_skill_threshold: 888
+                    learn_skill_threshold: 888,
+                    learn_skill_only_user_provided: false
                 };
 
                 try {
@@ -1747,6 +1865,7 @@ const els = {
                     localStorage.setItem('uma_selected_preset', state.selectedPreset);
                     if (els.presetSelect) els.presetSelect.value = state.selectedPreset;
                     populatePresetUI();
+                    loadTeamFromPreset(getCurrentPreset());
                 } else {
                     state.presets = [];
                     state.selectedPreset = "";

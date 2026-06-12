@@ -84,6 +84,13 @@ def serialize_preset(raw):
     serialized["extra_race_list"] = normalize_race_list(data.get("extra_race_list", data.get("race_list", [])))
     serialized["learn_skill_threshold"] = as_int(data.get("learn_skill_threshold"), 888)
 
+    serialized["team_trainee_id"] = as_int(data.get("team_trainee_id"), 0)
+    raw_ids = data.get("team_parent_ids") or []
+    serialized["team_parent_ids"] = [as_int(x, 0) for x in raw_ids] if isinstance(raw_ids, list) else []
+    serialized["team_deck_id"] = as_int(data.get("team_deck_id"), 0)
+    serialized["team_friend_viewer_id"] = as_int(data.get("team_friend_viewer_id"), 0)
+    serialized["team_friend_card_id"] = as_int(data.get("team_friend_card_id"), 0)
+
     return serialized
 
 def hydrate_preset(raw):

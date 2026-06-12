@@ -1069,6 +1069,19 @@ class DeletePresetByNameRequest(BaseModel):
     name: str
 
 
+class SaveSkillRequest(BaseModel):
+    id: str = ""
+    name: str
+    rarity: int = 1
+    group_id: int = 0
+    grade_value: int = 0
+    need_skill_point: int = 0
+    disable_singlemode: int = 0
+    tags: list[int] = []
+    icon_id: int = 20013
+    skill_category: int = 0
+
+
 class CareerActionRequest(BaseModel):
     command_type: int
     command_id: int
@@ -1140,6 +1153,32 @@ async def save_races(req: SaveRacesRequest):
     preset["extra_race_list"] = req.races
     preset_store.write(preset)
     return {"success": True}
+
+
+@app.get("/api/skills")
+async def get_skills():
+    return {"success": True, "skills": skill_data}
+
+
+@app.post("/api/skills")
+async def save_skill(req: SaveSkillRequest):
+    global skill_data
+    skill_id = req.id.strip() if req.id.strip() else str(max((int(k) for k in skill_data), default=900000) + 1)
+    skill_entry = {
+        "name": req.name,
+        "rarity": req.rarity,
+        "group_id": req.group_id,
+        "grade_value": req.grade_value,
+        "need_skill_point": req.need_skill_point,
+        "disable_singlemode": req.disable_singlemode,
+        "tags": req.tags,
+        "icon_id": req.icon_id,
+        "skill_category": req.skill_category,
+    }
+    skill_data[skill_id] = skill_entry
+    with open(skill_data_path, "w", encoding="utf-8") as f:
+        json.dump(skill_data, f, indent=2, ensure_ascii=False)
+    return {"success": True, "skill_id": skill_id, "skill": skill_entry}
 
 
 @app.get("/api/presets")
@@ -1742,6 +1781,15 @@ async def logout():
     raw_load_index_response = None
     pending_game_auth_config = {}
     active_selection = {"deck": None, "friend": None, "trainee": None, "veterans": []}
+    return {"success": True}
+
+
+@app.post("/api/cleanup")
+async def cleanup():
+    for fname in ("auth_config.json", "steam_token.txt"):
+        path = os.path.join(RUNTIME_DIR, fname)
+        if os.path.exists(path):
+            os.remove(path)
     return {"success": True}
 
 
