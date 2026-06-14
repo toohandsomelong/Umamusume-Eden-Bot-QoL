@@ -2,6 +2,10 @@
 const state = {
     needs2fa: false,
     isLoading: false,
+    qrSessionId: null,
+    qrPollTimer: null,
+    qrCodeInstance: null,
+    qrStarted: false,
     account: null,
     isDeletingCareer: false,
     isFetchingFriends: false,
@@ -82,7 +86,14 @@ const els = {
     skillTiersContainer: document.getElementById('skill-tiers-container'),
     skillBlacklistContainer: document.getElementById('skill-blacklist-container'),
     skillAddTierBtn: document.getElementById('skill-add-tier-btn'),
-    skillModalClose: document.getElementById('skill-modal-close')
+    skillModalClose: document.getElementById('skill-modal-close'),
+    qrTabBtn: document.getElementById('qr-tab-btn'),
+    pwdTabBtn: document.getElementById('pwd-tab-btn'),
+    qrLoginContent: document.getElementById('qr-login-content'),
+    pwdLoginContent: document.getElementById('pwd-login-content'),
+    qrCodeTarget: document.getElementById('qr-code-target'),
+    qrStatusMsg: document.getElementById('qr-status-msg'),
+    qrProgress: document.getElementById('qr-progress')
 };
         const delaySettingsStorageKey = 'uma_turn_delay_settings';
         const burnClocksStorageKey = 'uma_burn_clocks';
@@ -133,6 +144,7 @@ const els = {
             window.setTimeout(() => els.brandMark.classList.remove('is-entrance'), 950);
         }
         hideNavbar();
+        window.setTimeout(() => startQrLogin(), 500);
         function syncDashboardHeight() {
             const navbar = document.querySelector('.navbar');
             const navbarHeight = navbar ? navbar.getBoundingClientRect().height : 0;
@@ -312,10 +324,7 @@ const els = {
             return nextTheme;
         };
         applyTheme(localStorage.getItem('theme'));
-        const savedUsername = localStorage.getItem('saved_username');
-        const savedPassword = localStorage.getItem('saved_password');
-        if (savedUsername) document.getElementById('username').value = savedUsername;
-        if (savedPassword) document.getElementById('password').value = savedPassword;
+
         let themeToggleClicks = 0;
         els.themeToggle.addEventListener('click', () => {
             const nextTheme = document.body.classList.contains('theme-blue') ? 'pink' : 'blue';
@@ -563,8 +572,6 @@ const els = {
                 if (data.needs_2fa) {
                     showTwoFactorPrompt();
                 } else if (data.success) {
-                    localStorage.setItem('saved_username', payload.username);
-                    localStorage.setItem('saved_password', payload.password);
                     await renderDashboard(data, { animateIntro: true, waitForIntro: true });
                     state.isLoading = false;
                 } else {
@@ -575,22 +582,134 @@ const els = {
             }
         });
 
-        els.cleanupBtn = document.getElementById('cleanup-btn');
-        els.cleanupBtn.addEventListener('click', async () => {
-            localStorage.removeItem('saved_username');
-            localStorage.removeItem('saved_password');
-            document.getElementById('username').value = '';
-            document.getElementById('password').value = '';
-            document.getElementById('code').value = '';
+        function resetQrState() {
+            if (state.qrPollTimer) {
+                clearInterval(state.qrPollTimer);
+                state.qrPollTimer = null;
+            }
+            state.qrSessionId = null;
+            state.qrStarted = false;
+            if (state.qrCodeInstance) {
+                state.qrCodeInstance.clear();
+                state.qrCodeInstance = null;
+            }
+            els.qrCodeTarget.innerHTML = '';
+            els.qrStatusMsg.style.display = 'none';
+            els.qrStatusMsg.innerText = '';
+            document.querySelectorAll('.qr-progress-step').forEach(el => el.classList.remove('active', 'done'));
+        }
+
+        function switchToQrTab() {
+            els.qrTabBtn.classList.add('active');
+            els.pwdTabBtn.classList.remove('active');
+            els.qrLoginContent.classList.add('active');
+            els.pwdLoginContent.classList.remove('active');
+        }
+
+        function switchToPwdTab() {
+            els.pwdTabBtn.classList.add('active');
+            els.qrTabBtn.classList.remove('active');
+            els.pwdLoginContent.classList.add('active');
+            els.qrLoginContent.classList.remove('active');
+            resetQrState();
+        }
+
+        els.qrTabBtn.addEventListener('click', switchToQrTab);
+        els.pwdTabBtn.addEventListener('click', switchToPwdTab);
+
+        async function startQrLogin() {
+            if (state.qrStarted) return;
+            state.qrStarted = true;
+            els.qrStatusMsg.style.display = 'block';
+            els.qrStatusMsg.innerText = 'GENERATING QR...';
             try {
-                await apiJson('/api/cleanup', { method: 'POST' });
-            } catch (e) {}
-            els.errorMsg.style.display = 'block';
-            els.errorMsg.textContent = 'CREDENTIALS CLEARED';
-        });
+                const data = await apiJson('/api/login/qr/start', { method: 'POST' });
+                if (!data.success) {
+                    els.qrStatusMsg.innerText = data.detail || 'FAILED';
+                    state.qrStarted = false;
+                    return;
+                }
+                state.qrSessionId = data.session_id;
+                els.qrStatusMsg.innerText = 'SCAN WITH STEAM MOBILE APP';
+                document.querySelector('.qr-progress-step[data-step="1"]').classList.add('active');
+                if (window.QRCode) {
+                    state.qrCodeInstance = new QRCode(els.qrCodeTarget, {
+                        text: data.qr_url,
+                        width: 220,
+                        height: 220,
+                        colorDark: '#ffffff',
+                        colorLight: '#1a1420',
+                        correctLevel: window.QRCode.CorrectLevel ? window.QRCode.CorrectLevel.M : undefined
+                    });
+                } else {
+                    els.qrCodeTarget.innerHTML = '<a href="' + data.qr_url + '" target="_blank" style="color:var(--accent-primary)">Open QR URL</a>';
+                }
+                state.qrPollTimer = setInterval(() => pollQrStatus(), 2000);
+            } catch (e) {
+                els.qrStatusMsg.innerText = 'NETWORK ERROR';
+                state.qrStarted = false;
+            }
+        }
+
+        async function pollQrStatus() {
+            if (!state.qrSessionId) return;
+            try {
+                const data = await apiJson('/api/login/qr/status/' + state.qrSessionId);
+                if (!data.success) return;
+                if (data.status === 'scanning') {
+                    els.qrStatusMsg.innerText = 'PHONE DETECTED!';
+                    document.querySelector('.qr-progress-step[data-step="1"]').classList.remove('active');
+                    document.querySelector('.qr-progress-step[data-step="1"]').classList.add('done');
+                    document.querySelector('.qr-progress-step[data-step="2"]').classList.add('active');
+                } else if (data.status === 'approved') {
+                    document.querySelector('.qr-progress-step[data-step="2"]').classList.remove('active');
+                    document.querySelector('.qr-progress-step[data-step="2"]').classList.add('done');
+                    document.querySelector('.qr-progress-step[data-step="3"]').classList.add('active');
+                    els.qrStatusMsg.innerText = 'APPROVED! GETTING TICKET...';
+                } else if (data.status === 'complete') {
+                    if (state.qrPollTimer) clearInterval(state.qrPollTimer);
+                    state.qrPollTimer = null;
+                    await completeQrLogin();
+                } else if (data.status === 'error') {
+                    if (state.qrPollTimer) clearInterval(state.qrPollTimer);
+                    state.qrPollTimer = null;
+                    els.qrStatusMsg.innerText = data.error || 'QR LOGIN FAILED';
+                    state.qrStarted = false;
+                } else if (data.status === 'expired') {
+                    if (state.qrPollTimer) clearInterval(state.qrPollTimer);
+                    state.qrPollTimer = null;
+                    els.qrStatusMsg.innerText = 'SESSION EXPIRED';
+                    state.qrStarted = false;
+                }
+            } catch (e) {
+                // silent
+            }
+        }
+
+        async function completeQrLogin() {
+            if (!state.qrSessionId) return;
+            setLoadingScreen(true);
+            try {
+                const data = await apiJson('/api/login/qr/complete/' + state.qrSessionId, { method: 'POST' });
+                if (data.success) {
+                    document.querySelector('.qr-progress-step[data-step="3"]').classList.remove('active');
+                    document.querySelector('.qr-progress-step[data-step="3"]').classList.add('done');
+                    resetQrState();
+                    await renderDashboard(data, { animateIntro: true, waitForIntro: true });
+                } else {
+                    els.qrStatusMsg.innerText = data.detail || 'LOGIN FAILED';
+                    state.qrStarted = false;
+                }
+            } catch (e) {
+                els.qrStatusMsg.innerText = 'NETWORK ERROR';
+                state.qrStarted = false;
+            }
+            setLoadingScreen(false);
+        }
 
         els.logoutBtn.addEventListener('click', async () => {
             setLoadingScreen(false);
+            resetQrState();
             try {
                 await apiJson('/api/logout', { method: 'POST' });
             } catch (e) {}
@@ -611,6 +730,7 @@ const els = {
             resetSelection();
             syncDashboardHeight();
             loginForm.reset();
+            switchToQrTab();
         });
 
         const formatNumber = value => Number(value || 0).toLocaleString();

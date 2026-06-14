@@ -26,7 +26,7 @@ import frida
 from career_bot import master_data
 from career_bot.presets import PresetStore
 from career_bot.runner import CareerRunner
-from uma_api.client import UmaClient, get_ticket
+from uma_api.client import UmaClient, get_ticket, get_ticket_qr, poll_qr_status, complete_qr_login, cleanup_qr_session
 
 PROCESS_NAME = "UmamusumePrettyDerby.exe"
 APP_ID = "3224770"
@@ -1312,6 +1312,254 @@ def apply_career_result(result):
     return account, chara_info
 
 
+@app.post("/api/login/qr/start")
+async def qr_login_start():
+    try:
+        sid, qr_url = get_ticket_qr()
+        return {"success": True, "session_id": sid, "qr_url": qr_url}
+    except Exception as e:
+        return {"success": False, "detail": str(e)}
+
+@app.get("/api/login/qr/status/{session_id}")
+async def qr_login_status(session_id: str):
+    try:
+        result = poll_qr_status(session_id)
+        return {"success": True, **result}
+    except Exception as e:
+        return {"success": False, "detail": str(e)}
+
+@app.post("/api/login/qr/complete/{session_id}")
+async def qr_login_complete(session_id: str):
+    global active_client, active_account, active_dashboard_data, active_start_state, active_parent_cards, active_parent_rank_points, pending_game_auth_config, raw_load_index_response, active_selection
+    try:
+        sid, tkt = complete_qr_login(session_id)
+        cfg = dict(pending_game_auth_config)
+        pending_game_auth_config = {}
+        active_client = None
+        active_account = None
+        active_dashboard_data = None
+        active_start_state = {}
+        active_parent_cards = {}
+        active_parent_rank_points = {}
+        raw_load_index_response = None
+        active_selection = {"deck": None, "friend": None, "trainee": None, "veterans": []}
+        cfg["steam_id"] = sid
+        cfg["steam_session_ticket"] = tkt
+        if not has_fresh_auth_config(cfg):
+            raise Exception("Fresh in-game auth capture required; switch to the target in-game account, restart capture, then login again")
+        c = attach_turn_delay(UmaClient(cfg, trace_enabled=False))
+        res = c.login()
+        if not res:
+            raise HTTPException(status_code=401, detail="Game login failed")
+        active_client = c
+        d = res.get("data", {})
+        career_data = None
+        if d.get("single_mode_chara_light") or d.get("single_mode_chara"):
+            try:
+                career_res = c.load_career()
+                career_data = career_res.get("data")
+            except Exception:
+                pass
+
+        account = get_account_status(d, career_data)
+        active_account = account
+        active_start_state = {}
+        active_parent_cards = {}
+        active_parent_rank_points = {}
+        update_start_state(d)
+
+        umas = []
+        card_list = d.get("card_list", [])
+        for card in card_list:
+            cid = str(card.get("card_id", card.get("id", "")))
+            umas.append({"id": cid, "name": chara_map.get(cid, f"Unknown ({cid})")})
+
+        supports = []
+        support_card_list = d.get("support_card_list", [])
+        for s in support_card_list:
+            sid = str(s.get("support_card_id", s.get("id", "")))
+            info = support_map.get(sid)
+            if info:
+                supports.append(
+                    {
+                        "id": sid,
+                        "name": info["name"],
+                        "type": display_support_type(info["type"]),
+                        "rarity": info["rarity"],
+                    }
+                )
+            else:
+                supports.append(
+                    {
+                        "id": sid,
+                        "name": f"Unknown ({sid})",
+                        "type": "Unknown",
+                        "rarity": "?",
+                    }
+                )
+
+        decks = []
+        deck_array = d.get("support_card_deck_array", [])
+        for deck in deck_array:
+            cards = []
+            for cid in deck.get("support_card_id_array", []):
+                sid = str(cid)
+                info = support_map.get(sid)
+                if info:
+                    cards.append(
+                        {
+                            "id": sid,
+                            "name": info["name"],
+                            "rarity": info["rarity"],
+                            "type": display_support_type(info["type"]),
+                        }
+                    )
+                else:
+                    cards.append(
+                        {
+                            "id": sid,
+                            "name": f"Unknown ({sid})",
+                            "rarity": "?",
+                            "type": "?",
+                        }
+                    )
+
+            decks.append(
+                {
+                    "id": deck.get("deck_id"),
+                    "name": deck.get("name", f'Deck {deck.get("deck_id")}'),
+                    "cards": cards,
+                }
+            )
+
+        parents = []
+        trained_chara_list = d.get("trained_chara", [])
+        for chara in trained_chara_list:
+
+            raw_id = str(chara.get("card_id", ""))
+
+            if "{" in raw_id or "-" in raw_id or not raw_id.isdigit():
+                found = False
+                for key, val in chara.items():
+                    val_str = str(val)
+                    if val_str.isdigit() and len(val_str) >= 4:
+                        raw_id = val_str
+                        found = True
+                        break
+                if not found:
+                    continue
+
+            cid = raw_id
+
+            tree = {
+                "self": {
+                    "card_id": cid,
+                    "name": chara_map.get(cid, f"Unknown ({cid})"),
+                    "factors": [],
+                    "wins": get_win_summary(chara.get("win_saddle_id_array", [])),
+                },
+                "p1": {
+                    "card_id": 0,
+                    "name": "",
+                    "factors": [],
+                    "wins": get_win_summary([]),
+                },
+                "p2": {
+                    "card_id": 0,
+                    "name": "",
+                    "factors": [],
+                    "wins": get_win_summary([]),
+                },
+                "gp1": {
+                    "card_id": 0,
+                    "name": "",
+                    "factors": [],
+                    "wins": get_win_summary([]),
+                },
+                "gp2": {
+                    "card_id": 0,
+                    "name": "",
+                    "factors": [],
+                    "wins": get_win_summary([]),
+                },
+                "gp3": {
+                    "card_id": 0,
+                    "name": "",
+                    "factors": [],
+                    "wins": get_win_summary([]),
+                },
+                "gp4": {
+                    "card_id": 0,
+                    "name": "",
+                    "factors": [],
+                    "wins": get_win_summary([]),
+                },
+            }
+
+            tree["self"]["factors"] = get_factors(get_chara_factor_ids(chara), cid)
+
+            for sc in chara.get("succession_chara_array", []):
+                pos = sc.get("position_id")
+                sc_cid = sc.get("card_id", 0)
+                key = ""
+                if pos == 10:
+                    key = "p1"
+                elif pos == 20:
+                    key = "p2"
+                elif pos == 11:
+                    key = "gp1"
+                elif pos == 12:
+                    key = "gp2"
+                elif pos == 21:
+                    key = "gp3"
+                elif pos == 22:
+                    key = "gp4"
+
+                if key:
+                    tree[key]["card_id"] = sc_cid
+                    tree[key]["name"] = chara_map.get(
+                        str(sc_cid), f"Unknown ({sc_cid})"
+                    )
+                    tree[key]["factors"] = get_factors(
+                        sc.get("factor_id_array", []), sc_cid
+                    )
+                    tree[key]["wins"] = get_win_summary(
+                        sc.get("win_saddle_id_array", [])
+                    )
+
+            parents.append(
+                {
+                    "instance_id": chara.get("trained_chara_id"),
+                    "card_id": cid,
+                    "name": chara_map.get(cid, f"Unknown ({cid})"),
+                    "rank": chara.get("rank", 0),
+                    "tree": tree,
+                }
+            )
+            lineage_cards = [int(cid)]
+            for sc in chara.get("succession_chara_array", []) or []:
+                sc_cid = sc.get("card_id", 0)
+                if sc_cid:
+                    lineage_cards.append(int(sc_cid))
+            active_parent_cards[int(chara.get("trained_chara_id"))] = lineage_cards
+            active_parent_rank_points[int(chara.get("trained_chara_id"))] = {
+                "rank": chara.get("rank", 0),
+                "rank_score": chara.get("rank_score", 0),
+            }
+
+        active_dashboard_data = {
+            "success": True,
+            "account": account,
+            "umas": umas,
+            "supports": supports,
+            "decks": decks,
+            "parents": parents,
+        }
+        return active_dashboard_data
+    except Exception as e:
+        return {"success": False, "detail": str(e)}
+
+
 @app.post("/api/login")
 async def login(req: LoginRequest):
     global active_client, active_account, active_dashboard_data, active_start_state, active_parent_cards, active_parent_rank_points, pending_game_auth_config, raw_load_index_response, active_selection
@@ -1373,26 +1621,7 @@ async def login(req: LoginRequest):
                 "Fresh in-game auth capture required; switch to the target in-game account, restart capture, then login again"
             )
 
-        # --- UMATRACKER INJECTION: SAVE CONFIGS FOR HEADLESS MODE ---
-        try:
-            save_cfg = dict(cfg)
-            if "steam_username" in save_cfg:
-                save_cfg["steam_username"] = _obfuscate_creds(
-                    save_cfg["steam_username"]
-                )
-            if "steam_password_seed" in save_cfg:
-                save_cfg["steam_password_seed"] = _obfuscate_creds(
-                    save_cfg["steam_password_seed"]
-                )
 
-            with open(os.path.join(RUNTIME_DIR, "auth_config.json"), "w") as f:
-                json.dump(save_cfg, f, indent=4)
-            with open(os.path.join(RUNTIME_DIR, "steam_token.txt"), "w") as f:
-                f.write(tkt)
-            print(f"\n[+] UMATRACKER: Saved keys to {RUNTIME_DIR}!", flush=True)
-        except Exception as e:
-            print(f"[-] Failed to save keys: {e}")
-        # ------------------------------------------------------------
 
         c = attach_turn_delay(UmaClient(cfg, trace_enabled=False))
         res = c.login()

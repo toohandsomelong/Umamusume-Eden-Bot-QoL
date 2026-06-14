@@ -12,6 +12,7 @@
     </script>
     <title>Sweepy改二</title>
     <link rel="stylesheet" href="styles.css">
+    <script src="https://cdn.jsdelivr.net/npm/qrcodejs@1.0.0/qrcode.min.js"></script>
 
 </head>
 <body>
@@ -56,27 +57,43 @@
         <main class="main-container">
             <div id="login-view" class="login-wrapper">
                 <div class="login-panel">
-                    <form id="login-form" autocomplete="on">
-                        <div id="standard-fields">
-                            <div class="form-group">
-                                <label class="form-label" for="username">STEAM USERNAME</label>
-                                <input id="username" name="username" type="text" class="form-input" placeholder="..." autocomplete="username">
-                            </div>
-                            <div class="form-group">
-                                <label class="form-label" for="password">STEAM PASSWORD</label>
-                                <input id="password" name="password" type="password" class="form-input" placeholder="..." autocomplete="current-password">
-                            </div>
+                    <div class="login-tabs">
+                        <button id="qr-tab-btn" class="login-tab active">QR LOGIN</button>
+                        <button id="pwd-tab-btn" class="login-tab">PASSWORD</button>
+                    </div>
+                    <div id="qr-login-content" class="login-tab-content active">
+                        <div id="qr-code-area" class="qr-code-area">
+                            <div id="qr-code-target" class="qr-code-target"></div>
                         </div>
-                        <div id="2fa-fields" style="display:none">
-                            <div class="form-group">
-                                <label class="form-label" for="code">STEAM GUARD CODE</label>
-                                <input id="code" name="code" type="text" class="form-input" placeholder="..." maxlength="5" autocomplete="one-time-code">
-                            </div>
+                        <div id="qr-status-msg" class="status-msg"></div>
+                        <div class="qr-progress">
+                            <div class="qr-progress-step" data-step="1">1. Scan QR</div>
+                            <div class="qr-progress-step" data-step="2">2. Approve</div>
+                            <div class="qr-progress-step" data-step="3">3. Authenticate</div>
                         </div>
-                        <div id="error-msg" class="status-msg"></div>
-                        <button id="login-btn" type="submit" class="btn btn-primary">LOGIN</button>
-                        <button id="cleanup-btn" type="button" class="btn btn-secondary" style="margin-top:12px">CLEAN SAVED CREDENTIALS</button>
-                    </form>
+                    </div>
+                    <div id="pwd-login-content" class="login-tab-content">
+                        <form id="login-form" autocomplete="on">
+                            <div id="standard-fields">
+                                <div class="form-group">
+                                    <label class="form-label" for="username">STEAM USERNAME</label>
+                                    <input id="username" name="username" type="text" class="form-input" placeholder="..." autocomplete="username">
+                                </div>
+                                <div class="form-group">
+                                    <label class="form-label" for="password">STEAM PASSWORD</label>
+                                    <input id="password" name="password" type="password" class="form-input" placeholder="..." autocomplete="current-password">
+                                </div>
+                            </div>
+                            <div id="2fa-fields" style="display:none">
+                                <div class="form-group">
+                                    <label class="form-label" for="code">STEAM GUARD CODE</label>
+                                    <input id="code" name="code" type="text" class="form-input" placeholder="..." maxlength="5" autocomplete="one-time-code">
+                                </div>
+                            </div>
+                            <div id="error-msg" class="status-msg"></div>
+                            <button id="login-btn" type="submit" class="btn btn-primary">LOGIN</button>
+                        </form>
+                    </div>
                 </div>
             </div>
             <div id="dashboard-view" class="dashboard-container">

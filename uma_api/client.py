@@ -111,6 +111,158 @@ client.on("loggedOn", () => {
 });
 """
 
+QR_TICKET_JS = r"""const {LoginSession, EAuthTokenPlatformType} = require('steam-session');
+const SteamUser = require('steam-user');
+const TIMEOUT = 180000;
+function logJson(obj) { process.stdout.write(JSON.stringify(obj) + '\n'); }
+async function main() {
+    const session = new LoginSession(EAuthTokenPlatformType.SteamClient);
+    session.loginTimeout = TIMEOUT;
+    const result = await session.startWithQR();
+    if (!result.actionRequired || !result.qrChallengeUrl) {
+        logJson({type: 'error', message: 'QR challenge not available'});
+        process.exit(1);
+    }
+    logJson({type: 'qr_url', url: result.qrChallengeUrl});
+    session.on('remoteInteraction', () => {
+        logJson({type: 'status', status: 'scanning'});
+    });
+    session.on('authenticated', () => {
+        logJson({type: 'status', status: 'approved'});
+        const refreshToken = session.refreshToken;
+        const client = new SteamUser();
+        let done = false;
+        client.on('error', (err) => {
+            if (!done) { done = true; logJson({type: 'error', message: err.message}); }
+        });
+        client.on('loggedOn', () => {
+            client.createAuthSessionTicket(3224770, (err, sessionTicket) => {
+                if (done) return;
+                if (err) { done = true; logJson({type: 'error', message: err.message}); return; }
+                const buf = Buffer.isBuffer(sessionTicket) ? sessionTicket : sessionTicket.sessionTicket || sessionTicket;
+                logJson({type: 'result', steam_id: client.steamID.getSteamID64(), session_ticket: Buffer.from(buf).toString('hex').toUpperCase()});
+                done = true;
+                setTimeout(() => process.exit(0), 500);
+            });
+        });
+        client.logOn({ refreshToken });
+    });
+    session.on('timeout', () => { logJson({type: 'error', message: 'QR login timed out'}); process.exit(1); });
+    session.on('error', (err) => { logJson({type: 'error', message: err.message}); process.exit(1); });
+}
+main().catch(err => { logJson({type: 'error', message: err.message}); process.exit(1); });
+"""
+
+import threading
+import uuid
+
+_qr_sessions = {}
+_qr_sessions_lock = threading.Lock()
+
+def _qr_reader_thread(proc, sid):
+    sessions = _qr_sessions
+    try:
+        while True:
+            line = proc.stdout.readline()
+            if not line:
+                break
+            data = json.loads(line.strip())
+            with _qr_sessions_lock:
+                if sid not in sessions:
+                    break
+                t = data.get('type')
+                if t == 'status':
+                    sessions[sid]['status'] = data['status']
+                elif t == 'result':
+                    sessions[sid]['result'] = data
+                    sessions[sid]['status'] = 'complete'
+                elif t == 'error':
+                    sessions[sid]['error'] = data['message']
+                    sessions[sid]['status'] = 'error'
+    except Exception:
+        pass
+    finally:
+        with _qr_sessions_lock:
+            if sid in sessions and sessions[sid].get('status') not in ('complete', 'error'):
+                sessions[sid]['status'] = 'error'
+                sessions[sid]['error'] = 'Process ended unexpectedly'
+
+def get_ticket_qr(timeout_sec=180):
+    global _qr_sessions
+    check_deps()
+    sid = str(uuid.uuid4())
+    proc = subprocess.Popen(
+        ['node', '-e', QR_TICKET_JS],
+        stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+        text=True, cwd=DIR
+    )
+    import time
+    deadline = time.time() + 15
+    qr_url = None
+    while time.time() < deadline:
+        line = proc.stdout.readline()
+        if not line:
+            time.sleep(0.1)
+            continue
+        data = json.loads(line.strip())
+        if data.get('type') == 'qr_url':
+            qr_url = data['url']
+            break
+        if data.get('type') == 'error':
+            proc.kill()
+            raise Exception(data.get('message', 'QR login failed'))
+    if not qr_url:
+        proc.kill()
+        raise Exception('Failed to get QR challenge URL')
+    entry = {
+        'process': proc,
+        'qr_url': qr_url,
+        'status': 'waiting',
+        'result': None,
+        'error': None,
+        'created_at': time.time()
+    }
+    with _qr_sessions_lock:
+        _qr_sessions[sid] = entry
+    t = threading.Thread(target=_qr_reader_thread, args=(proc, sid), daemon=True)
+    t.start()
+    return sid, qr_url
+
+def poll_qr_status(sid):
+    with _qr_sessions_lock:
+        entry = _qr_sessions.get(sid)
+        if not entry:
+            return {'status': 'expired'}
+        status = entry['status']
+        result = {'status': status}
+        if status == 'complete' and entry.get('result'):
+            result['result'] = entry['result']
+        if status == 'error' and entry.get('error'):
+            result['error'] = entry['error']
+        return result
+
+def complete_qr_login(sid):
+    with _qr_sessions_lock:
+        entry = _qr_sessions.pop(sid, None)
+        if not entry:
+            raise Exception('QR session not found')
+        if entry['status'] != 'complete' or not entry.get('result'):
+            raise Exception('QR login not yet complete')
+        result = entry['result']
+        proc = entry.get('process')
+    if proc and proc.poll() is None:
+        proc.kill()
+    return result['steam_id'], result['session_ticket']
+
+def cleanup_qr_session(sid):
+    with _qr_sessions_lock:
+        entry = _qr_sessions.pop(sid, None)
+    if entry:
+        proc = entry.get('process')
+        if proc and proc.poll() is None:
+            proc.kill()
+
+
 SALT = b'co!=Y;(UQCGxJ_n82'
 HEAD = bytes.fromhex('6b20e2ab6c311330f761d737ce3f3025750850665eea58b6372f8d2f57501eb344bdb7270a9067f5b63cd61f152cfb986cbfbf7a')
 SENSITIVE_ERROR_KEYS = {"auth_key", "steam_session_ticket", "sid", "udid", "device_id"}

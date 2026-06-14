@@ -556,6 +556,87 @@ body.dashboard-mode .turn-delay-control {
   padding: 4rem;
   box-shadow: 0 0 3rem var(--accent-dim);
 }
+.login-tabs {
+  display: flex;
+  border-bottom: 0.1rem solid var(--border-soft);
+  margin-bottom: 2.5rem;
+}
+.login-tab {
+  flex: 1;
+  background: transparent;
+  border: none;
+  color: var(--text-muted);
+  font-size: 1rem;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.1rem;
+  padding: 0.8rem 1rem;
+  cursor: pointer;
+  border-bottom: 0.2rem solid transparent;
+  transition: all var(--transition-speed);
+}
+.login-tab.active {
+  color: var(--accent-primary);
+  border-bottom-color: var(--accent-primary);
+}
+.login-tab-content {
+  display: none;
+}
+.login-tab-content.active {
+  display: block;
+}
+.qr-code-area {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  padding: 1rem 0 2rem 0;
+}
+.qr-code-target {
+  background: var(--surface-2);
+  border: 0.1rem solid var(--border-soft);
+  border-radius: var(--radius-md);
+  padding: 1rem;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  width: 240px;
+  height: 240px;
+}
+.qr-code-target canvas,
+.qr-code-target img {
+  display: block;
+  max-width: 100%;
+  max-height: 100%;
+}
+.qr-progress {
+  display: flex;
+  justify-content: center;
+  gap: 0.5rem;
+  margin-top: 1.5rem;
+}
+.qr-progress-step {
+  font-size: 0.75rem;
+  font-weight: 700;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.05rem;
+  padding: 0.4rem 0.8rem;
+  border-radius: var(--radius-sm);
+  border: 0.1rem solid var(--border-soft);
+  transition: all var(--transition-speed);
+}
+.qr-progress-step.active {
+  color: var(--accent-primary);
+  border-color: var(--accent-primary);
+  box-shadow: 0 0 0.5rem var(--accent-dim);
+}
+.qr-progress-step.done {
+  color: #4ade80;
+  border-color: #4ade80;
+}
+.status-msg {
+  text-align: center;
+}
 .form-group {
   margin-bottom: 2rem;
 }
