@@ -1,3 +1,9 @@
+# This is Quality of Life version
+- QR Login
+- save set up to preset (Deck, Friend, Trainee, Parents)
+- Configure skills in web instead of manual write in preset file
+- All by Deepseek-v4-flash
+
 # Sweepy — /vg/'s Uma Musume Bot (UAT REHASHED)
 
 > [!IMPORTANT]
