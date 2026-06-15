@@ -1054,8 +1054,3 @@ class UmaClient:
             'add_race_array': add_race_array or [],
             'cancel_race_array': cancel_race_array or []
         })
-
-    def get_friend_trained_chara(self, viewer_ids):
-        return self.call('friend/get_trained_chara', {
-            'friend_viewer_id_array': viewer_ids
-        })
