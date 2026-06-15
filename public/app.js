@@ -20,7 +20,8 @@ const state = {
     burnClocks: false,
     displayedClocksUsed: 0,
     devEnabled: false,
-    consecutiveRunnerFails: 0
+    consecutiveRunnerFails: 0,
+    parentTab: 'own'
 };
 const els = {
     loadingScreen: document.getElementById('loading-screen'),
@@ -1030,11 +1031,13 @@ const els = {
         }
                 function updateVetSelectability() {
             const full = selection.veterans.length >= 2;
+            const hasFriendVet = selection.veterans.some(v => v && v.is_friend);
             document.querySelectorAll('#parent-grid .grid-card').forEach(card => {
                 if (card.classList.contains('selected')) {
                     card.classList.remove('vet-full');
                 } else {
-                    card.classList.toggle('vet-full', full);
+                    const isFriendCard = card.classList.contains('friend-parent-card');
+                    card.classList.toggle('vet-full', full || (isFriendCard && hasFriendVet));
                 }
             });
             syncStartButton();
@@ -1661,6 +1664,9 @@ const els = {
             current.team_deck_id = selection.deck ? Number(selection.deck.id) : 0;
             current.team_friend_viewer_id = selection.friend ? Number(selection.friend.viewer_id) : 0;
             current.team_friend_card_id = selection.friend ? Number(selection.friend.support_card_id) : 0;
+            const rentalVet = selection.veterans.find(v => v && v.is_friend);
+            current.team_rental_viewer_id = rentalVet ? Number(rentalVet.owner_viewer_id) : 0;
+            current.team_rental_trained_chara_id = rentalVet ? Number(rentalVet.instance_id) : 0;
 
             try {
                 await apiJson('/api/presets', {
@@ -1712,9 +1718,19 @@ const els = {
                 }
             }
 
-            if (preset.team_parent_ids?.length && dashData.parents) {
+            if (preset.team_parent_ids?.length) {
                 const wanted = preset.team_parent_ids.map(id => Number(id)).filter(Boolean);
-                dashData.parents.forEach((p, idx) => {
+                const isRental = preset.team_rental_viewer_id && preset.team_rental_trained_chara_id;
+                const source = isRental ? (dashData.friend_parents || []) : (dashData.parents || []);
+                if (isRental) {
+                    state.parentTab = 'friends';
+                    document.querySelectorAll('#parent-tab-bar .tab-btn').forEach(b => b.classList.remove('active'));
+                    const friendTab = document.querySelector('#parent-tab-bar .tab-btn[data-tab="friends"]');
+                    if (friendTab) friendTab.classList.add('active');
+                    renderParents(source);
+                    attachSelectionHandlers();
+                }
+                source.forEach((p, idx) => {
                     const pId = Number(p.instance_id);
                     if (wanted.includes(pId) && selection.veterans.length < 2 && !selection.veterans.find(v => Number(v.instance_id) === pId)) {
                         p._gridIdx = idx;
@@ -2066,6 +2082,7 @@ const els = {
                 });
                 if (!data.success) throw new Error(data.detail || 'Friend load failed');
                 dashData.friends = data.friends || [];
+                dashData.friend_parents = data.friend_parents || [];
                 appendSeenFriendIds(data.exclude_viewer_ids || []);
                 renderFriends();
                 if (data.source === 'Active Career (Skip)') {
@@ -2109,6 +2126,9 @@ const els = {
             let finalMessage = '';
             let finalIsError = false;
             const activeCareer = state.account && state.account.career && state.account.career.active;
+            const isFriendVet = (v) => v && v.is_friend;
+            const rental_viewer_id = selection.veterans.find(isFriendVet) ? Number(selection.veterans.find(isFriendVet).owner_viewer_id) : 0;
+            const rental_trained_chara_id = selection.veterans.find(isFriendVet) ? Number(selection.veterans.find(isFriendVet).instance_id) : 0;
             const body = activeCareer ? {
                 preset_name: state.selectedPreset,
                 max_steps: 2500,
@@ -2119,8 +2139,8 @@ const els = {
                 support_card_ids: selection.deck.cards.map(card => Number(card.id)),
                 friend_viewer_id: Number(selection.friend.viewer_id),
                 friend_card_id: Number(selection.friend.support_card_id),
-                parent_id_1: Number(selection.veterans[0].instance_id),
-                parent_id_2: Number(selection.veterans[1].instance_id),
+                parent_id_1: Number(selection.veterans[0].is_friend ? 0 : selection.veterans[0].instance_id),
+                parent_id_2: Number(selection.veterans[1].is_friend ? 0 : selection.veterans[1].instance_id),
                 deck_id: Number(selection.deck.id),
                 scenario_id: 4,
                 use_tp: 30,
@@ -2131,7 +2151,9 @@ const els = {
                 preset_name: state.selectedPreset,
                 max_steps: 2500,
                 burn_clocks: state.burnClocks,
-                dev_mode: state.devEnabled
+                dev_mode: state.devEnabled,
+                rental_viewer_id: rental_viewer_id,
+                rental_trained_chara_id: rental_trained_chara_id
             };
             try {
                 const data = await apiJson('/api/career/run', {
@@ -2388,16 +2410,42 @@ const els = {
         }
         function selectParent(index, element) {
             if (element.classList.contains('vet-full')) return;
+            const sourceList = state.parentTab === 'friends' ? (dashData.friend_parents || []) : (dashData.parents || []);
+            const isFriendCard = sourceList[index] && sourceList[index].is_friend;
+            const hasFriendVet = selection.veterans.some(v => v && v.is_friend);
+            if (isFriendCard && hasFriendVet) return;
             if (element.classList.contains('selected')) {
                 element.classList.remove('selected');
                 selection.veterans = selection.veterans.filter(parent => parent._gridIdx !== index);
             } else if (selection.veterans.length < 2) {
                 element.classList.add('selected');
-                selection.veterans.push({ ...dashData.parents[index], _gridIdx: index });
+                selection.veterans.push({ ...sourceList[index], _gridIdx: index });
             }
             updateVetSelectability();
             renderTeamPanel();
             syncSelectionToServer();
+            savePresetConfig();
+        }
+        function refreshParentGrid() {
+            const src = state.parentTab === 'own' ? (dashData.parents || []) : (dashData.friend_parents || []);
+            renderParents(src);
+            attachSelectionHandlers();
+            bindSparkTooltips();
+            updateVetSelectability();
+            renderTeamPanel();
+        }
+        function attachParentTabHandlers() {
+            document.querySelectorAll('#parent-tab-bar .tab-btn').forEach(btn => {
+                btn.addEventListener('click', () => {
+                    document.querySelectorAll('#parent-tab-bar .tab-btn').forEach(b => b.classList.remove('active'));
+                    btn.classList.add('active');
+                    state.parentTab = btn.dataset.tab;
+                    refreshParentGrid();
+                });
+            });
+            document.querySelectorAll('#parent-filter-bar .filter-input').forEach(input => {
+                input.addEventListener('input', refreshParentGrid);
+            });
         }
         function attachSelectionHandlers() {
             document.querySelectorAll('.deck-container').forEach((element, index) => {
@@ -2482,10 +2530,55 @@ const els = {
                 </div>`;
             }).join('');
         }
+        function factorStars(parent, factorName) {
+            const factors = (parent.tree && parent.tree.self && parent.tree.self.factors) || [];
+            const match = factors.find(f => (f.name || '').toLowerCase() === factorName.toLowerCase());
+            return match ? (match.stars || 0) : 0;
+        }
+        function abbrStatName(name) {
+            const m = {Speed:'Spd',Stamina:'Sta',Power:'Pow',Guts:'Gut',Wit:'Wiz'};
+            return m[name] || name.substring(0,3);
+        }
+        function readParentFilters() {
+            const g = id => {
+                const el = document.getElementById(id);
+                return el ? el.value.trim() : '';
+            };
+            return {
+                name: g('filter-parent-name').toLowerCase(),
+                sta: parseInt(g('filter-sta-min')) || 0,
+                spd: parseInt(g('filter-spd-min')) || 0,
+                wiz: parseInt(g('filter-wiz-min')) || 0,
+                pow: parseInt(g('filter-pow-min')) || 0,
+                gut: parseInt(g('filter-gut-min')) || 0,
+            };
+        }
+        function filterParents(list) {
+            const f = readParentFilters();
+            return list.filter(p => {
+                if (f.name && !(p.name || '').toLowerCase().includes(f.name)) return false;
+                if (f.sta && factorStars(p, 'Stamina') < f.sta) return false;
+                if (f.spd && factorStars(p, 'Speed') < f.spd) return false;
+                if (f.wiz && factorStars(p, 'Wit') < f.wiz) return false;
+                if (f.pow && factorStars(p, 'Power') < f.pow) return false;
+                if (f.gut && factorStars(p, 'Guts') < f.gut) return false;
+                return true;
+            });
+        }
         function renderParents(parents) {
-            els.parentGrid.innerHTML = parents.map(parent => {
+            const isFriendTab = state.parentTab === 'friends';
+            const filtered = filterParents(parents);
+            els.parentGrid.innerHTML = filtered.map(parent => {
                 const imgId = parent.card_id || '100101';
-                return `<div class="grid-card">
+                const badge = parent.is_friend && parent.owner_name
+                    ? `<div class="friend-badge">${parent.owner_name}</div>`
+                    : '';
+                const factors = (parent.tree && parent.tree.self && parent.tree.self.factors) || [];
+                const statFactors = factors.filter(f => f.category === 'stat').sort((a, b) => b.stars - a.stars);
+                const starLine = statFactors.length
+                    ? statFactors.map(f => `<span class="card-star-pill"><span class="star-pill-name">${abbrStatName(f.name)}</span>${'★'.repeat(f.stars)}</span>`).join(' ')
+                    : '';
+                return `<div class="grid-card${parent.is_friend ? ' friend-parent-card' : ''}">
                     <div class="rank-badge">${rankMap[parent.rank] || '??'}</div>
                     <img src="/api/images/${imgId}.png" onerror="hideBrokenImage(this)">
                     <div class="sparks-tooltip" style="--spark-bg: url('/api/images/${imgId}.png')">
@@ -2499,9 +2592,15 @@ const els = {
                     <div class="grid-card-overlay">
                         <span class="grid-card-kicker">ID: ${parent.instance_id || '?'}</span>
                         <span class="grid-card-name">${parent.name || 'Unknown'}</span>
+                        ${starLine ? `<div class="card-star-row">${starLine}</div>` : ''}
+                        ${badge}
                     </div>
                 </div>`;
             }).join('');
+            const count = filtered.length;
+            const ownCount = (dashData && dashData.parents ? dashData.parents.length : 0);
+            const friendCount = (dashData && dashData.friend_parents ? dashData.friend_parents.length : 0);
+            els.parentCount.innerText = `(${ownCount}/${friendCount})`;
         }
         function renderTrainees(umas) {
             els.umaGrid.innerHTML = umas.map(uma => {
@@ -2622,6 +2721,7 @@ const els = {
             dashData.validDecks = data.decks.filter(isValidDeck);
             dashData.friends = data.friends || [];
             dashData.friendExcludeIds = data.friendExcludeIds || [];
+            dashData.friend_parents = data.friend_parents || [];
             showDashboardView(data);
             renderCounts(data);
             renderDecks(dashData.validDecks);
@@ -2639,6 +2739,7 @@ const els = {
                 renderFriends();
             }
             bindSparkTooltips();
+            attachParentTabHandlers();
             attachSelectionHandlers();
             bindRaceHandlers();
             bindPresetHandlers();

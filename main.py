@@ -880,6 +880,30 @@ def get_chara_factor_ids(chara):
     return [f.get("factor_id", 0) for f in chara.get("factor_info_array", [])]
 
 
+def parent_sort_key(p):
+    sname = p.get("name", "") or ""
+def factor_stars(p, factor_name):
+    tree = p.get("tree") or {}
+    for f in tree.get("self", {}).get("factors", []):
+        if f.get("name", "").lower() == factor_name.lower():
+            return int(f.get("stars", 0))
+    return 0
+
+
+def parent_sort_key(p):
+    sname = p.get("name", "") or ""
+    stats = [
+        (0, factor_stars(p, "Stamina")),
+        (1, factor_stars(p, "Speed")),
+        (2, factor_stars(p, "Wit")),
+        (3, factor_stars(p, "Power")),
+        (4, factor_stars(p, "Guts")),
+    ]
+    best = max(stats, key=lambda x: (x[1], -x[0]))
+    best_idx, best_stars = best
+    return (best_idx, -best_stars, sname)
+
+
 def get_item_count(item_list, item_id):
     for item in item_list or []:
         if item.get("item_id") == item_id:
@@ -1035,6 +1059,8 @@ class StartCareerRequest(BaseModel):
     is_boost: int = 0
     boost_story_event_id: int = 0
     burn_clocks: bool = False
+    rental_viewer_id: int = 0
+    rental_trained_chara_id: int = 0
 
 
 class RunCareerRequest(BaseModel):
@@ -1055,6 +1081,8 @@ class RunCareerRequest(BaseModel):
     max_steps: int = 2500
     burn_clocks: bool = False
     dev_mode: bool = False
+    rental_viewer_id: int = 0
+    rental_trained_chara_id: int = 0
 
 
 class SaveRacesRequest(BaseModel):
@@ -1281,6 +1309,8 @@ def start_career_from_request(req):
         difficulty=req.difficulty,
         is_boost=req.is_boost,
         boost_story_event_id=req.boost_story_event_id,
+        rental_viewer_id=req.rental_viewer_id,
+        rental_trained_chara_id=req.rental_trained_chara_id,
     )
     return {"success": True, "result": result}
 
@@ -1546,6 +1576,10 @@ async def qr_login_complete(session_id: str):
                 "rank": chara.get("rank", 0),
                 "rank_score": chara.get("rank_score", 0),
             }
+
+        parents.sort(key=parent_sort_key)
+        for idx, p in enumerate(parents):
+            p["_sort_idx"] = idx
 
         active_dashboard_data = {
             "success": True,
@@ -1823,6 +1857,10 @@ async def login(req: LoginRequest):
                 "rank": chara.get("rank", 0),
                 "rank_score": chara.get("rank_score", 0),
             }
+
+        parents.sort(key=parent_sort_key)
+        for idx, p in enumerate(parents):
+            p["_sort_idx"] = idx
 
         active_dashboard_data = {
             "success": True,
@@ -2225,6 +2263,7 @@ async def get_friend_list(req: FriendListRequest):
             "friends": active_dashboard_data["friends"],
             "exclude_viewer_ids": active_dashboard_data.get("friendExcludeIds", []),
             "source": "cache",
+            "friend_parents": active_dashboard_data.get("friend_parents", []),
         }
 
     try:
@@ -2233,20 +2272,139 @@ async def get_friend_list(req: FriendListRequest):
         update_start_state(data)
         friends, exclude_viewer_ids, source = normalize_friend_cards(data)
 
+        friend_parents = []
+        succession_data = data.get("succession_trained_chara_data") or {}
+        succession_array = succession_data.get("succession_trained_chara_array") or []
+        owner_map = {}
+        for info in (succession_data.get("summary_user_info_array") or []):
+            vid = info.get("viewer_id")
+            if vid:
+                owner_map[str(vid)] = info.get("name", f"User {vid}")
+        for entry in succession_array:
+            raw_id = str(entry.get("card_id", ""))
+            if "{" in raw_id or "-" in raw_id or not raw_id.isdigit():
+                for key, val in entry.items():
+                    vs = str(val)
+                    if vs.isdigit() and len(vs) >= 4:
+                        raw_id = vs
+                        break
+                if "{" in raw_id or "-" in raw_id or not raw_id.isdigit():
+                    continue
+            cid = raw_id
+            owner_vid = str(entry.get("viewer_id") or "")
+
+            tree = {
+                "self": {
+                    "card_id": cid,
+                    "name": chara_map.get(cid, f"Unknown ({cid})"),
+                    "factors": [],
+                    "wins": get_win_summary(entry.get("win_saddle_id_array", [])),
+                },
+                "p1": {"card_id": 0, "name": "", "factors": [], "wins": get_win_summary([])},
+                "p2": {"card_id": 0, "name": "", "factors": [], "wins": get_win_summary([])},
+                "gp1": {"card_id": 0, "name": "", "factors": [], "wins": get_win_summary([])},
+                "gp2": {"card_id": 0, "name": "", "factors": [], "wins": get_win_summary([])},
+                "gp3": {"card_id": 0, "name": "", "factors": [], "wins": get_win_summary([])},
+                "gp4": {"card_id": 0, "name": "", "factors": [], "wins": get_win_summary([])},
+            }
+            tree["self"]["factors"] = get_factors(get_chara_factor_ids(entry), cid)
+            for sc in entry.get("succession_chara_array", []):
+                pos = sc.get("position_id")
+                sc_cid = sc.get("card_id", 0)
+                key = ""
+                if pos == 10: key = "p1"
+                elif pos == 20: key = "p2"
+                elif pos == 11: key = "gp1"
+                elif pos == 12: key = "gp2"
+                elif pos == 21: key = "gp3"
+                elif pos == 22: key = "gp4"
+                if key:
+                    tree[key]["card_id"] = sc_cid
+                    tree[key]["name"] = chara_map.get(str(sc_cid), f"Unknown ({sc_cid})")
+                    tree[key]["factors"] = get_factors(sc.get("factor_id_array", []), sc_cid)
+                    tree[key]["wins"] = get_win_summary(sc.get("win_saddle_id_array", []))
+
+            self_factors = tree.get("self", {}).get("factors", [])
+            green_stars = sum(f["stars"] for f in self_factors if f.get("category") == "unique")
+            pink_stars = sum(f["stars"] for f in self_factors if f.get("category") == "aptitude")
+            friend_parents.append({
+                "instance_id": entry.get("trained_chara_id"),
+                "card_id": cid,
+                "name": chara_map.get(cid, f"Unknown ({cid})"),
+                "rank": entry.get("rank", 0),
+                "speed": entry.get("speed", 0),
+                "stamina": entry.get("stamina", 0),
+                "power": entry.get("power", 0),
+                "wiz": entry.get("wiz", 0),
+                "guts": entry.get("guts", 0),
+                "green_stars": green_stars,
+                "pink_stars": pink_stars,
+                "owner_name": owner_map.get(owner_vid, f"Friend {owner_vid}"),
+                "owner_viewer_id": entry.get("viewer_id", 0),
+                "is_friend": True,
+                "tree": tree,
+            })
+
+        friend_parents.sort(key=parent_sort_key)
+        for idx, p in enumerate(friend_parents):
+            p["_sort_idx"] = idx
+
         if active_dashboard_data is not None:
             active_dashboard_data["friends"] = friends
             active_dashboard_data["friendExcludeIds"] = exclude_viewer_ids
             active_dashboard_data["friendsLoaded"] = True
+            active_dashboard_data["friend_parents"] = friend_parents
 
         return {
             "success": True,
             "friends": friends,
             "exclude_viewer_ids": exclude_viewer_ids,
             "source": source,
+            "friend_parents": friend_parents,
         }
     except Exception as e:
         return {"success": False, "detail": str(e)}
 
+
+class DiscoverFriendParentsRequest(BaseModel):
+    viewer_ids: list[int] = []
+    exclude_viewer_ids: list[int] = []
+
+@app.post("/api/discover/friend-parents")
+async def discover_friend_parents(req: DiscoverFriendParentsRequest):
+    global active_client
+    if not active_client:
+        return {"success": False, "detail": "Not logged in"}
+
+    results = {}
+    candidates = [
+        "friend/get_trained_chara",
+        "friend/get_friend_trained_chara",
+        "friend/get_parent_chara",
+        "friend/trained_chara",
+        "load/get_friend_trained_chara",
+        "pre_single_mode/get_friend_trained_chara",
+    ]
+
+    ids = req.viewer_ids or req.exclude_viewer_ids
+    for ep in candidates:
+        try:
+            payload = {}
+            if ids:
+                payload["friend_viewer_id_array"] = ids
+                payload["viewer_id_array"] = ids
+            payload["trained_chara_type"] = 2
+            res = active_client.call(ep, payload)
+            data = res.get("data", {})
+            results[ep] = {
+                "success": True,
+                "response_keys": list(data.keys()),
+                "has_trained_chara": "trained_chara" in data or "trained_chara_array" in data,
+            }
+        except Exception as e:
+            results[ep] = {"success": False, "error": str(e)[:200]}
+
+    return {"success": True, "results": results}
 
 @app.post("/api/career/action")
 async def career_action(req: CareerActionRequest):
