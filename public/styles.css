@@ -1606,6 +1606,24 @@ body.dashboard-mode .turn-delay-control {
   overflow: hidden;
   text-shadow: 0 0.1rem 0.2rem #000;
 }
+.card-star-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.2rem;
+  justify-content: center;
+  margin-top: 0.1rem;
+}
+.card-star-pill {
+  font-size: 0.55rem;
+  font-weight: 700;
+  line-height: 1;
+  color: #60a5fa;
+  letter-spacing: 0.03em;
+}
+.star-pill-name {
+  color: var(--text-muted);
+  margin-right: 0.05rem;
+}
 .rank-badge {
   position: absolute;
   top: 0.38rem;

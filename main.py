@@ -880,6 +880,28 @@ def get_chara_factor_ids(chara):
     return [f.get("factor_id", 0) for f in chara.get("factor_info_array", [])]
 
 
+def factor_stars(p, factor_name):
+    tree = p.get("tree") or {}
+    for f in tree.get("self", {}).get("factors", []):
+        if f.get("name", "").lower() == factor_name.lower():
+            return int(f.get("stars", 0))
+    return 0
+
+
+def parent_sort_key(p):
+    sname = p.get("name", "") or ""
+    stats = [
+        (0, factor_stars(p, "Stamina")),
+        (1, factor_stars(p, "Speed")),
+        (2, factor_stars(p, "Wit")),
+        (3, factor_stars(p, "Power")),
+        (4, factor_stars(p, "Guts")),
+    ]
+    best = max(stats, key=lambda x: (x[1], -x[0]))
+    best_idx, best_stars = best
+    return (best_idx, -best_stars, sname)
+
+
 def get_item_count(item_list, item_id):
     for item in item_list or []:
         if item.get("item_id") == item_id:
@@ -1547,6 +1569,10 @@ async def qr_login_complete(session_id: str):
                 "rank_score": chara.get("rank_score", 0),
             }
 
+        parents.sort(key=parent_sort_key)
+        for idx, p in enumerate(parents):
+            p["_sort_idx"] = idx
+
         active_dashboard_data = {
             "success": True,
             "account": account,
@@ -1823,6 +1849,10 @@ async def login(req: LoginRequest):
                 "rank": chara.get("rank", 0),
                 "rank_score": chara.get("rank_score", 0),
             }
+
+        parents.sort(key=parent_sort_key)
+        for idx, p in enumerate(parents):
+            p["_sort_idx"] = idx
 
         active_dashboard_data = {
             "success": True,

@@ -2482,9 +2482,23 @@ const els = {
                 </div>`;
             }).join('');
         }
+        function factorStars(parent, factorName) {
+            const factors = (parent.tree && parent.tree.self && parent.tree.self.factors) || [];
+            const match = factors.find(f => (f.name || '').toLowerCase() === factorName.toLowerCase());
+            return match ? (match.stars || 0) : 0;
+        }
+        function abbrStatName(name) {
+            const m = {Speed:'Spd',Stamina:'Sta',Power:'Pow',Guts:'Gut',Wit:'Wiz'};
+            return m[name] || name.substring(0,3);
+        }
         function renderParents(parents) {
             els.parentGrid.innerHTML = parents.map(parent => {
                 const imgId = parent.card_id || '100101';
+                const factors = (parent.tree && parent.tree.self && parent.tree.self.factors) || [];
+                const statFactors = factors.filter(f => f.category === 'stat').sort((a, b) => b.stars - a.stars);
+                const starLine = statFactors.length
+                    ? statFactors.map(f => `<span class="card-star-pill"><span class="star-pill-name">${abbrStatName(f.name)}</span>${'★'.repeat(f.stars)}</span>`).join(' ')
+                    : '';
                 return `<div class="grid-card">
                     <div class="rank-badge">${rankMap[parent.rank] || '??'}</div>
                     <img src="/api/images/${imgId}.png" onerror="hideBrokenImage(this)">
@@ -2499,6 +2513,7 @@ const els = {
                     <div class="grid-card-overlay">
                         <span class="grid-card-kicker">ID: ${parent.instance_id || '?'}</span>
                         <span class="grid-card-name">${parent.name || 'Unknown'}</span>
+                        ${starLine ? `<div class="card-star-row">${starLine}</div>` : ''}
                     </div>
                 </div>`;
             }).join('');
