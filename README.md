@@ -1,3 +1,5 @@
+# TS IS COOKED NO MORE FUNCTIONABLE
+
 # This is Quality of Life version
 - QR Login
 - save set up to preset (Deck, Friend, Trainee, Parents)
